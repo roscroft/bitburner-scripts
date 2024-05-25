@@ -10,6 +10,7 @@ const max_func_str = stat => `Max${upper_str(stat)}`
 const seq = amount => [...Array(amount).keys()]
 const getPossible = (cur, max) => seq(max-cur)
 
+const money_fn = factor => ns => ns.getPlayer().money*factor
 const player_stat_mult = (ns, stat) => ns.getPlayer().mults[mult_str(stat)]
 const max_stat = (ns, stat) => ns.formulas.hacknetServers.constants()[max_func_str(plural(stat))]
 const serv_cost_base = (ns, stat) => ns.formulas.hacknetServers[stat+"UpgradeCost"]
@@ -41,13 +42,11 @@ function buy_fn(ns) {
     }
 }
 
-const player_money = ns => ns.getPlayer().money*MONEYFAC
 const reg_comp = (best, cur) => cur.benefit/cur.cost > best.benefit/best.cost
-const best_buy = ns => general_buy(ns, base, player_money, reg_comp)
+const best_buy = ns => general_buy(ns, base, money_fn(MONEYFAC), reg_comp)
 
-const cache_money = ns => ns.getPlayer().money*CACHEMONEYFAC
 const cache_comp = (best, cur) => cur.amount > best.amount
-const cache_buy = ns => general_buy(ns, ["cache"], cache_money, cache_comp)
+const cache_buy = ns => general_buy(ns, ["cache"], money_fn(CACHEMONEYFAC), cache_comp)
 
 function possibles(ns, node) {
     return stats => {
