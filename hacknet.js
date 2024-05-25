@@ -41,33 +41,33 @@ function buy_fn(ns) {
     }
 }
 
-const node_possibles = (ns, node) => possibles(ns, node, base)
 const player_money = ns => ns.getPlayer().money*MONEYFAC
 const reg_comp = (best, cur) => cur.benefit/cur.cost > best.benefit/best.cost
-const best_buy = ns => general_buy(ns, node_possibles, player_money, reg_comp)
+const best_buy = ns => general_buy(ns, base, player_money, reg_comp)
 
-const cache_possibles = (ns, node) => possibles(ns, node, ["cache"])
 const cache_money = ns => ns.getPlayer().money*CACHEMONEYFAC
 const cache_comp = (best, cur) => cur.amount > best.amount
-const cache_buy = ns => general_buy(ns, cache_possibles, cache_money, cache_comp)
+const cache_buy = ns => general_buy(ns, ["cache"], cache_money, cache_comp)
 
-function possibles(ns, node, stats) {
-    return stats.map(stat => {
-        let ctxt = [ns, stat]
-        let node_fn = node_stats(node)
-        return substitution(range, [node_fn, max_stat], ctxt).map(amount => ({
-            node:node, 
-            stat:stat, 
-            amount:amount,
-            cost:cost_fn(node_fn, ctxt)(amount), 
-            benefit:benefit_fn(node_fn, ctxt)(amount),
-        }))
-    })
+function possibles(ns, node) {
+    return stats => {
+        return stats.map(stat => {
+            let ctxt = [ns, stat]
+            let node_fn = node_stats(node)
+            return substitution(range, [node_fn, max_stat], ctxt).map(amount => ({
+                node:node, 
+                stat:stat, 
+                amount:amount,
+                cost:cost_fn(node_fn, ctxt)(amount), 
+                benefit:benefit_fn(node_fn, ctxt)(amount),
+            }))
+        })
+    }
 }
 
-function general_buy(ns, poss_fn, cost_fn, comp_fn) {
+function general_buy(ns, stats, cost_fn, comp_fn) {
     return seq(ns.hacknet.numNodes()).reduce((best, node) => { // idx, stat, possible, cost, benefit
-        let options = poss_fn(ns, node).filter(opt => opt.cost <= cost_fn(ns))
+        let options = possibles(ns, node)(stats).filter(opt => opt.cost <= cost_fn(ns))
         let server_best = options.reduce((acc, cur) => comp_fn(acc, cur) ? cur : acc, {amount:0, cost:1, benefit:0})
         return comp_fn(best, server_best) ? server_best : best
     }, {amount:0, cost:1, benefit:0})
