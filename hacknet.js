@@ -1,87 +1,65 @@
-const MONEYFAC = 0.5
-const CACHEMONEYFAC = 0.005
+const MONEY_PCT = { base: 1, cache: 0.05 }
 
-const base = ["core", "level", "ram"]
+const prop = base => attr => attr != "" ? base[attr] : base
+const B = f => g => x => f(g(x))
+const D2 = f => g => h => (x,y) => f(g(x))(h(y)) // const P = f => g => x => y => f(g(x))(g(y))
+const K = x => y => x // const
+const S = f => g => x => f(x)(g(x)) //const S2 = f => g => h => S(f)(S(g)(h))
+const S2 = (f, g, h) => S(S(f)(g))(h)
+const Sn = (f, ...fs) => x => f(...x)(...fs.map(g => g(...x)))
+
+const seq = b => a => [...Array(b - a).keys()]
+const mul = a => b => a * b
+const add = a => b => a + b
+const aug = update => base => Object.assign(base, update)
+
 const plural = stat => stat == "core" ? "cores" : stat
 const mult_str = stat => `hacknet_node_${stat}_cost`
-const upper_str = stat => stat[0].toUpperCase()+stat.slice(1)
-const max_func_str = stat => `Max${upper_str(stat)}`
-
-const seq = amount => [...Array(amount).keys()]
-const getPossible = (cur, max) => seq(max-cur)
-
-const money_fn = factor => ns => ns.getPlayer().money*factor
-const player_stat_mult = (ns, stat) => ns.getPlayer().mults[mult_str(stat)]
-const max_stat = (ns, stat) => ns.formulas.hacknetServers.constants()[max_func_str(plural(stat))]
-const serv_cost_base = (ns, stat) => ns.formulas.hacknetServers[stat+"UpgradeCost"]
-const node_stats = node => (ns, stat) => ns.hacknet.getNodeStats(node)[plural(stat)]
+const upgrade_str = stat => stat + "UpgradeCost"
+const upper_str = stat => stat[0].toUpperCase() + stat.slice(1)
+const max_str = stat => `Max${upper_str(stat)}`
 const ram_mod = stat => item => stat == "ram" ? Math.log2(item) : item
-const range = (ns, stat) => (node_fn_c, max_fn_c) => getPossible(...[node_fn_c, max_fn_c].map(ram_mod(stat)))
-const new_prod = (ns, cores, level, ram) => ns.formulas.hacknetServers.hashGainRate(level, 0, ram, cores)
-const cost_fn = (node_fn, ctxt) => amount => substitution(serv_cost_base, [node_fn, constant(amount), player_stat_mult], ctxt)
-const benefit_fn = (node_fn, ctxt) => amount => {
-    let [ns, stat] = ctxt
-    let current = base.map(stat => node_fn(ns, stat))
-    if (stat == "level")
-        current[1] += amount
-    else if (stat == "ram")
-        current[2] *= Math.pow(2, amount)
-    else if (stat == "core")
-        current[0] += amount
-    return new_prod(ns, ...current)
-}
+const hash_str = "hashGainRate"
+const hash_gain_args = ["level", "ramUsed", "ram", "cores"]
+const ram_op_mod = stat => n => stat == "ram" ? mul(Math.pow(2, n)) : add(n)
+const stat_mod = (n, update_stat) => stat => stat == update_stat ? n : 0
 
-const constant = arg => (...args) => arg
-const send = (fns, args) => fns.map(fn => fn(...args))
-const substitution = (f, fns, args) => f(...args)(...send(fns, args))
+const hnet = ns => ns["hacknet"]
+const hnet_f = ns => ns["formulas"]["hacknetServers"]
+const p_mults = ns => ns.getPlayer().mults
+const get_node = node => ns => ns["hacknet"]["getNodeStats"](node)
+const get_constants = ns => prop(hnet_f(ns))("constants")()
+const num_nodes = ns => prop(hnet(ns))("numNodes")()
 
-function buy_fn(ns) {
-    return to_buy => {
-        ns.print(`Buying ${to_buy.stat} for ${to_buy.node}!`)
-        ns["hacknet"][`upgrade${upper_str(to_buy.stat)}`](to_buy.node, to_buy.amount)
-    }
-}
+const hash = (ns, stat) => args => D2(prop)(hnet_f)(K(hash_str))(ns, stat)(...args)
+const hash_gain = (n, stat, node) => (ns, _) => hash_gain_args.map(S2(ram_op_mod, stat_mod(n, stat), prop(node(ns))))
+const benefit = (node, n, ns, stat) => Sn(hash, hash_gain(n, stat, node))([ns, stat])
 
-const reg_comp = (best, cur) => cur.benefit/cur.cost > best.benefit/best.cost
-const best_buy = ns => general_buy(ns, base, money_fn(MONEYFAC), reg_comp)
+const value = D2(prop)(hnet_f)(upgrade_str)
+const cost = (node, n, ns, stat) => Sn(value, D2(prop)(node)(plural), D2(prop)(K(n))(K("")), D2(prop)(p_mults)(mult_str))([ns, stat])
 
-const cache_comp = (best, cur) => cur.amount > best.amount
-const cache_buy = ns => general_buy(ns, ["cache"], money_fn(CACHEMONEYFAC), cache_comp)
+const obj_build = (node, ns, stat) => n => ({amount:n, cost:cost(node, n, ns, stat), benefit:benefit(node, n, ns, stat), stat:stat})
+const range = (_, stat) => D2(seq)(ram_mod(stat))(ram_mod(stat))
+const poss = (node, ns) => stat => Sn(range, D2(prop)(get_constants)(B(max_str)(plural)), D2(prop)(node)(plural))([ns, stat]).map(obj_build(node, ns, stat))
+const isvalid = (ns, cost_fac) => current => current.cost <= MONEY_PCT[cost_fac] * ns.getServerMoneyAvailable("home") && current.amount > 0
 
-function possibles(ns, node) {
-    return stats => {
-        return stats.map(stat => {
-            let ctxt = [ns, stat]
-            let node_fn = node_stats(node)
-            return substitution(range, [node_fn, max_stat], ctxt).map(amount => ({
-                node:node, 
-                stat:stat, 
-                amount:amount,
-                cost:cost_fn(node_fn, ctxt)(amount), 
-                benefit:benefit_fn(node_fn, ctxt)(amount),
-            }))
-        })
-    }
-}
-
-function general_buy(ns, stats, cost_fn, comp_fn) {
-    return seq(ns.hacknet.numNodes()).reduce((best, node) => { // idx, stat, possible, cost, benefit
-        let options = possibles(ns, node)(stats).filter(opt => opt.cost <= cost_fn(ns))
-        let server_best = options.reduce((acc, cur) => comp_fn(acc, cur) ? cur : acc, {amount:0, cost:1, benefit:0})
-        return comp_fn(best, server_best) ? server_best : best
-    }, {amount:0, cost:1, benefit:0})
-}
+const general_buy = (ns, stats, cost_fac, better) => seq(num_nodes(ns))(0)
+    .flatMap(num => stats.flatMap(poss(get_node(num), ns)).map(aug({ node: num })).filter(isvalid(ns, cost_fac)))
+        .reduce((best, cur) => better(best, cur) ? cur : best, { amount: 0, cost: 0, benefit: 1 })
 
 /** @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL")
     while (true) {
-        while (ns.hacknet.spendHashes("Sell for Money"))
-
-        while (ns.hacknet.purchaseNode() > 0)
-            ns.tprint("Purchased a node!")
-
-        let buys = [cache_buy(ns), best_buy(ns)].filter(buy => buy.amount > 0).map(buy_fn(ns))
-        await ns.sleep(10000)
+        while (ns["hacknet"]["purchaseNode"]() > 0)
+            ns.print("Purchased a node!")
+        while (ns["hacknet"]["spendHashes"]("Sell for Money")) { }
+        let buys = [
+            { name: "base", stats: ["core", "level", "ram"], cost_fac: "base", better: (a, b) => b.cost / b.benefit > a.cost / a.benefit },
+            { name: "cache", stats: ["cache"], cost_fac: "cache", better: (a, b) => b.amount > a.amount },
+        ].map(buy => general_buy(ns, buy.stats, buy.cost_fac, buy.better)).filter(buy => buy.amount > 0)
+        buys.map(to_buy => ns.print(`Buying ${to_buy.stat} for ${to_buy.node}!`))
+        buys.map(to_buy => ns["hacknet"][`upgrade${upper_str(to_buy.stat)}`](to_buy.node, to_buy.amount))
+        await ns.sleep(50)
     }
 }
